@@ -1,0 +1,5 @@
+# Environment inventory and graph workflow are outside the game design corpus.
+/AGENTS.md
+/docs/CAPABILITIES.md
+/docs/SKILL-INVENTORY.md
+/docs/GRAPHIFY.md
