@@ -1,0 +1,22 @@
+{
+  "initial": {"wood": 40, "stone": 25, "food": 30, "water": 30},
+  "capacity": {"wood": 100, "stone": 100, "food": 100, "water": 100},
+  "jobs": {
+    "woodcutter": {"resource": "wood", "rate": 4},
+    "stone_gatherer": {"resource": "stone", "rate": 2},
+    "forager": {"resource": "food", "rate": 3},
+    "water_carrier": {"resource": "water", "rate": 3},
+    "idle": {"resource": "", "rate": 0}
+  },
+  "people": [
+    {"name": "آوا", "job": "woodcutter"},
+    {"name": "سام", "job": "stone_gatherer"},
+    {"name": "رها", "job": "forager"},
+    {"name": "نوید", "job": "water_carrier"},
+    {"name": "نیما", "job": "idle"},
+    {"name": "سارا", "job": "idle"}
+  ],
+  "per_person_use": {"food": 0.25, "water": 0.30},
+  "efficiency_one_shortage": 0.65,
+  "efficiency_two_shortages": 0.5
+}
