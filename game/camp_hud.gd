@@ -1,16 +1,23 @@
 extends CanvasLayer
 
 const Economy = preload("res://game/economy.gd")
+const Construction = preload("res://game/construction.gd")
+const BuildPanel = preload("res://game/build_panel.gd")
 signal reset_view
+signal build_visibility_changed(open: bool)
 
 const TITLES := {"wood": "چوب", "stone": "سنگ", "food": "غذا", "water": "آب"}
 const RESOURCE_COLORS := {"wood": "edb978", "stone": "bac7d2", "food": "c2d48d", "water": "8bd0d3"}
 const JOBS := {
 	"woodcutter": "چوب‌بر", "stone_gatherer": "سنگ‌جمع‌کن", "forager": "گردآورنده غذا",
 	"water_carrier": "آب‌رسان", "idle": "آزاد",
+	"builder": "سازنده", "farmer": "کشاورز",
 }
 
 var economy: Economy
+var construction: Construction
+var build_panel: BuildPanel
+var housing_label: Label
 var panel: PanelContainer
 var resource_values: Dictionary = {}
 var rate_values: Dictionary = {}
@@ -31,11 +38,14 @@ var has_assigned_job := false
 var info_dialog: AcceptDialog
 var site_marker: Button
 var site_badge: Panel
+var site_track: ProgressBar
 var starter_art := true
 var selected := 0
+var world_blockers: Array[Control] = []
 
-func configure(model: Economy, use_starter_art := true) -> void:
+func configure(model: Economy, use_starter_art: bool, build_model: Construction) -> void:
 	economy = model
+	construction = build_model
 	starter_art = use_starter_art
 	var root := Control.new()
 	add_child(root)
@@ -46,6 +56,7 @@ func configure(model: Economy, use_starter_art := true) -> void:
 	create_goals(root)
 	create_footer(root)
 	create_people_panel(root)
+	create_build_panel(root)
 	if starter_art:
 		create_site_marker(root)
 	info_dialog = AcceptDialog.new()
@@ -53,7 +64,25 @@ func configure(model: Economy, use_starter_art := true) -> void:
 	root.add_child(info_dialog)
 	economy.changed.connect(refresh)
 	economy.job_changed.connect(mark_assignment)
+	construction.changed.connect(refresh)
 	refresh()
+
+func create_build_panel(root: Control) -> void:
+	build_panel = BuildPanel.new()
+	build_panel.add_theme_stylebox_override("panel", surface("233632", "a0a88d", 12))
+	root.add_child(build_panel)
+	build_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	build_panel.offset_left = -344
+	build_panel.offset_right = -17
+	build_panel.offset_top = 88
+	build_panel.configure(construction)
+	build_panel.choose.add_theme_stylebox_override("normal", surface("e8b762", "f5d18e", 9))
+	build_panel.choose.add_theme_stylebox_override("hover", surface("f5c873", "f5d18e", 9))
+	build_panel.choose.add_theme_color_override("font_color", Color("392b23"))
+	build_panel.choose.add_theme_color_override("font_hover_color", Color("392b23"))
+	build_panel.dismissed.connect(close_build)
+	build_panel.hide()
+	world_blockers.append(build_panel)
 
 func create_site_marker(root: Control) -> void:
 	site_marker = button("  Site")
@@ -65,17 +94,37 @@ func create_site_marker(root: Control) -> void:
 	site_marker.size = Vector2(117, 43)
 	site_marker.pressed.connect(show_build_site)
 	root.add_child(site_marker)
+	site_marker.hide()
+	site_track = ProgressBar.new()
+	site_track.position = Vector2(27, 33)
+	site_track.size = Vector2(69, 6)
+	site_track.show_percentage = false
+	site_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	site_track.add_theme_stylebox_override("background", surface("26332d", "26332d", 3))
+	site_track.add_theme_stylebox_override("fill", surface("a8cf64", "a8cf64", 3))
+	site_marker.add_child(site_track)
+	site_track.hide()
 	var tail := Polygon2D.new()
 	tail.polygon = PackedVector2Array([Vector2(49, 41), Vector2(68, 41), Vector2(58, 51)])
 	tail.color = Color("f6ead0")
 	site_marker.add_child(tail)
 	root.move_child(site_marker, 0)
+	world_blockers.append(site_marker)
 
-func place_site_marker(point: Vector2, area: Rect2) -> void:
+func place_site_marker(point: Vector2, area: Rect2, progress: float) -> void:
 	if site_marker == null:
 		return
 	site_marker.position = point - Vector2(59, 49)
-	site_marker.visible = area.grow(-35).has_point(point) and not panel.visible
+	site_marker.visible = area.grow(-35).has_point(point) and not panel.visible and not build_panel.visible
+	site_marker.text = "  Site" if progress < 0.0 else "  %d%%" % floori(progress * 100.0)
+	site_track.visible = progress >= 0.0
+	site_track.value = maxf(0, progress * 100.0)
+
+func blocks_world_at(point: Vector2) -> bool:
+	for control in world_blockers:
+		if control.is_visible_in_tree() and control.get_global_rect().has_point(point):
+			return true
+	return false
 
 func create_header(root: Control) -> void:
 	var header := HBoxContainer.new()
@@ -88,6 +137,7 @@ func create_header(root: Control) -> void:
 	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var title_card := card("293e3a")
 	header.add_child(title_card)
+	world_blockers.append(title_card)
 	var identity := HBoxContainer.new()
 	identity.add_theme_constant_override("separation", 9)
 	title_card.add_child(identity)
@@ -109,10 +159,11 @@ func create_header(root: Control) -> void:
 	var population := card("293e3a")
 	population.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	header.add_child(population)
+	world_blockers.append(population)
 	var count := HBoxContainer.new()
 	population.add_child(count)
 	count.add_child(picture("people", 25))
-	label(count, "%d/%d" % [economy.people.size(), 6], 18, "fff3da")
+	housing_label = label(count, "", 18, "fff3da")
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -127,6 +178,7 @@ func create_header(root: Control) -> void:
 		resource_card.add_theme_stylebox_override("panel", compact)
 		resource_card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		header.add_child(resource_card)
+		world_blockers.append(resource_card)
 		var column := VBoxContainer.new()
 		resource_card.add_child(column)
 		column.add_theme_constant_override("separation", 0)
@@ -153,10 +205,12 @@ func create_header(root: Control) -> void:
 	settings.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	settings.pressed.connect(show_camera_help)
 	header.add_child(settings)
+	world_blockers.append(settings)
 
 func create_goals(root: Control) -> void:
 	var goals_card := card("344944")
 	root.add_child(goals_card)
+	world_blockers.append(goals_card)
 	goals_card.position = Vector2(14, 86)
 	goals_card.custom_minimum_size.x = 245
 	var outer := VBoxContainer.new()
@@ -222,6 +276,7 @@ func create_footer(root: Control) -> void:
 	build.add_theme_color_override("font_hover_color", Color("4a3321"))
 	build.pressed.connect(show_build_site)
 	footer.add_child(build)
+	world_blockers.append(build)
 	if starter_art:
 		site_badge = Panel.new()
 		site_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -234,15 +289,19 @@ func create_footer(root: Control) -> void:
 	people_toggle = action("People", "people")
 	people_toggle.pressed.connect(toggle_people)
 	footer.add_child(people_toggle)
+	world_blockers.append(people_toggle)
 	var research := action("Research", "research")
 	research.disabled = true
 	footer.add_child(research)
+	world_blockers.append(research)
 	var upgrade := action("Upgrade", "upgrade")
 	upgrade.disabled = true
 	footer.add_child(upgrade)
+	world_blockers.append(upgrade)
 	var locked := action("", "lock")
 	locked.disabled = true
 	footer.add_child(locked)
+	world_blockers.append(locked)
 
 func create_people_panel(root: Control) -> void:
 	panel = card("172c2a")
@@ -252,6 +311,7 @@ func create_people_panel(root: Control) -> void:
 	panel.offset_right = -24
 	panel.offset_top = 111
 	panel.visible = false
+	world_blockers.append(panel)
 	var content := VBoxContainer.new()
 	content.add_theme_constant_override("separation", 5)
 	panel.add_child(content)
@@ -276,6 +336,8 @@ func create_people_panel(root: Control) -> void:
 		job_buttons[job] = option
 
 func toggle_people() -> void:
+	if not panel.visible:
+		close_build()
 	panel.visible = not panel.visible
 	people_toggle.text = "Close" if panel.visible else "People"
 
@@ -289,9 +351,18 @@ func mark_assignment(_person: int, _job: String) -> void:
 func show_build_site() -> void:
 	if site_badge != null:
 		site_badge.hide()
-	info_dialog.dialog_text = "داربست چوبی سمت راست محل کارگاه است. ساخت‌وساز در گام ۲ فعال می‌شود." if starter_art \
-		else "این نما کارگاه و انبار توسعه‌یافته را نشان می‌دهد. ساخت‌وساز در گام ۲ فعال می‌شود."
-	info_dialog.popup_centered()
+	if build_panel.visible:
+		close_build()
+	else:
+		panel.hide()
+		people_toggle.text = "People"
+		build_panel.show()
+		build_visibility_changed.emit(true)
+
+func close_build() -> void:
+	if build_panel.visible:
+		build_panel.hide()
+		build_visibility_changed.emit(false)
 
 func show_camera_help() -> void:
 	reset_view.emit()
@@ -312,6 +383,7 @@ func change_job(job: String) -> void:
 	refresh()
 
 func refresh() -> void:
+	housing_label.text = "%d/%d" % [economy.people.size(), construction.housing]
 	var net := economy.rates()
 	for resource: String in Economy.RESOURCES:
 		var rate: float = net[resource]
@@ -345,6 +417,7 @@ func refresh() -> void:
 	hint.text = "شغل %s" % economy.people[selected]["name"]
 	for job: String in job_buttons:
 		job_buttons[job].set_pressed_no_signal(job == economy.people[selected]["job"])
+		job_buttons[job].disabled = not economy.can_assign_job(selected, job)
 
 func make_theme() -> Theme:
 	var theme := Theme.new()

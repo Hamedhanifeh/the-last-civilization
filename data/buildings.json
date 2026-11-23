@@ -1,0 +1,4 @@
+{
+  "farm": {"title": "مزرعه کوچک", "size": [3, 2], "wood": 20, "stone": 10, "seconds": 20, "farmer_slots": 2, "housing": 0},
+  "tent": {"title": "چادر", "size": [2, 2], "wood": 18, "stone": 6, "seconds": 30, "farmer_slots": 0, "housing": 3}
+}
