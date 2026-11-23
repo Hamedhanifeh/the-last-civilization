@@ -6,6 +6,8 @@
     "stone_gatherer": {"resource": "stone", "rate": 2},
     "forager": {"resource": "food", "rate": 3},
     "water_carrier": {"resource": "water", "rate": 3},
+    "builder": {"resource": "", "rate": 0, "capacity": 1},
+    "farmer": {"resource": "food", "rate": 5.5, "capacity": 0},
     "idle": {"resource": "", "rate": 0}
   },
   "people": [

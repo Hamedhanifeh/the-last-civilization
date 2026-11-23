@@ -33,6 +33,8 @@ var rng := RandomNumberGenerator.new()
 var workers: Array[Node3D] = []
 var destinations: Array[Vector3] = []
 var worker_jobs: Array[String] = []
+var walking_paths: Array[PackedVector3Array] = []
+var path_steps: Array[int] = []
 var arms: Array[Node3D] = []
 var legs: Array[Array] = []
 var tools: Array[Dictionary] = []
@@ -82,13 +84,30 @@ func populate(people: Array, is_developed := false) -> void:
 
 func assign_job(person: int, job: String) -> void:
 	worker_jobs[person] = job
+	var tool_role := job
+	if job == "builder":
+		tool_role = "stone_gatherer"
+	elif job == "farmer":
+		tool_role = "forager"
 	for key: String in tools[person]:
-		tools[person][key].visible = key == job
+		tools[person][key].visible = key == tool_role
+	destinations[person] = work_target(person, job)
+	walking_paths[person] = PackedVector3Array()
+	path_steps[person] = 0
+
+func work_target(person: int, job: String) -> Vector3:
 	var offset := Vector3((person % 3 - 1) * 0.57, 0, floorf(person / 3.0) * 0.55)
-	if job == "idle":
+	if job in ["idle", "builder", "farmer"]:
+		job = "idle"
 		offset = Vector3(-1.6 + (person % 2) * 2.68, 0, 0.22)
 	var target: Vector3 = TARGETS[job] if developed_art else STARTER_TARGETS[job]
-	destinations[person] = target + offset
+	return target + offset
+
+func set_walking_path(person: int, path: PackedVector3Array) -> void:
+	walking_paths[person] = path
+	path_steps[person] = 0
+	var pos := workers[person].position
+	destinations[person] = Vector3(pos.x, 0, pos.z) if path.is_empty() else path[-1]
 
 func _process(delta: float) -> void:
 	age += delta
@@ -104,11 +123,17 @@ func _process(delta: float) -> void:
 	for index in range(workers.size()):
 		var person := workers[index]
 		var position := Vector3(person.position.x, 0, person.position.z)
-		var direction := destinations[index] - position
+		var path := walking_paths[index]
+		var next := path_steps[index]
+		while next < path.size() and position.distance_squared_to(path[next]) < 0.01:
+			next += 1
+		path_steps[index] = next
+		var target := path[next] if next < path.size() else destinations[index]
+		var direction := target - position
 		var walking := direction.length_squared() > 0.01
 		var stride := sin(age * 13.5 + index)
 		if walking:
-			person.position = position.move_toward(destinations[index], delta * 2.5)
+			person.position = position.move_toward(target, delta * 2.5)
 			person.rotation.y = lerp_angle(person.rotation.y, atan2(direction.x, direction.z), minf(delta * 10, 1))
 			person.position.y = absf(stride) * 0.061
 		else:
@@ -221,27 +246,55 @@ func outside_normal(yaw: float, center: Vector3) -> Vector3:
 	var normal := Vector3(sin(yaw), 0, cos(yaw))
 	return normal if normal.dot(center) >= 0 else -normal
 
-func tent(pos: Vector3, canvas: String, trim: String, yaw: float, size: float, medical := false) -> void:
+func tent(pos: Vector3, canvas: String, trim: String, yaw: float, size: float, medical := false, batch: Props = null) -> void:
+	if batch == null:
+		batch = props
 	var axis := Basis(Vector3.UP, yaw)
 	var peak := Vector3(0, 2.03, 0) * size
-	props.add("tent", pos + Vector3.UP * size, Vector3(2.84, 2.02, 2.83) * size, canvas, Vector3(0, yaw, 0))
-	props.add("tent", pos + axis * Vector3(0, 0.9, 1.44) * size, Vector3(2.46, 1.85, 0.04) * size, trim, Vector3(0, yaw, 0))
-	props.add("tent", pos + axis * Vector3(0, 0.63, 1.465) * size, Vector3(1.17, 1.28, 0.055) * size, "34362b", Vector3(0, yaw, 0))
+	batch.add("tent", pos + Vector3.UP * size, Vector3(2.84, 2.02, 2.83) * size, canvas, Vector3(0, yaw, 0))
+	batch.add("tent", pos + axis * Vector3(0, 0.9, 1.44) * size, Vector3(2.46, 1.85, 0.04) * size, trim, Vector3(0, yaw, 0))
+	batch.add("tent", pos + axis * Vector3(0, 0.63, 1.465) * size, Vector3(1.17, 1.28, 0.055) * size, "34362b", Vector3(0, yaw, 0))
 	for side in [-1, 1]:
-		props.beam(pos + axis * (peak + Vector3(0, 0, 1.48 * size)),
+		batch.beam(pos + axis * (peak + Vector3(0, 0, 1.48 * size)),
 			pos + axis * Vector3(side * 1.46, 0.035, 1.65) * size, 0.083 * size, trim)
 		var peg := pos + axis * Vector3(side * 1.9, 0.12, 1.97) * size
-		props.beam(pos + axis * Vector3(side * 0.97, 0.72, 1.31) * size, peg, 0.031, "c7af7b")
-		props.box(peg, Vector3(0.11, 0.27, 0.10), "79613d", yaw)
-	props.beam(pos + axis * (peak + Vector3(0, 0, -1.55 * size)),
+		batch.beam(pos + axis * Vector3(side * 0.97, 0.72, 1.31) * size, peg, 0.031, "c7af7b")
+		batch.box(peg, Vector3(0.11, 0.27, 0.10), "79613d", yaw)
+	batch.beam(pos + axis * (peak + Vector3(0, 0, -1.55 * size)),
 		pos + axis * (peak + Vector3(0, 0, 1.55 * size)), 0.061, trim)
 	if medical:
-		props.beam(pos + axis * Vector3(-0.72, 1.04, -0.36) * size,
+		batch.beam(pos + axis * Vector3(-0.72, 1.04, -0.36) * size,
 			pos + axis * Vector3(-0.72, 1.04, 0.42) * size, 0.10, "bcc6bd")
-		props.beam(pos + axis * Vector3(-0.41, 1.48, 0.03) * size,
+		batch.beam(pos + axis * Vector3(-0.41, 1.48, 0.03) * size,
 			pos + axis * Vector3(-1.03, 0.60, 0.03) * size, 0.097, "bcc6bd")
-	crate(pos + axis * Vector3(-1.84, 0, 0.92) * size, 0.56 * size)
-	crate(pos + axis * Vector3(-2.47, 0, 0.88) * size, 0.69 * size)
+	if batch == props:
+		crate(pos + axis * Vector3(-1.84, 0, 0.92) * size, 0.56 * size)
+		crate(pos + axis * Vector3(-2.47, 0, 0.88) * size, 0.69 * size)
+
+func draw_construction(kind: String, center: Vector3, span: Vector2, finished: bool) -> Node3D:
+	var model := Node3D.new()
+	add_child(model)
+	model.position = center
+	var batch := Props.new()
+	if finished and kind == "farm":
+		var field := Starter.new()
+		model.add_child(field)
+		field.props = batch
+		batch.placement = Transform3D(Basis.from_scale(Vector3(span.x / 4.4, 1, span.y / 3.8)), Vector3(0, 0, -0.19))
+		field.starter_garden()
+	elif finished:
+		tent(Vector3.ZERO, "be9258", "e2c39b", 0.0, 0.73, false, batch)
+	else:
+		batch.add("soil", Vector3.UP * 0.08, Vector3(span.x - 0.13, 0.16, span.y - 0.13), "8b725b")
+		for x in [-1, 1]:
+			for z in [-1, 1]:
+				var corner := Vector3(x * (span.x * 0.5 - 0.18), 0.45, z * (span.y * 0.5 - 0.18))
+				batch.timber(corner, Vector3(0.15, 0.89, 0.15), "ad8151")
+			batch.beam(Vector3(x * (span.x * 0.5 - 0.18), 0.48, -span.y * 0.5 + 0.2),
+				Vector3(x * (span.x * 0.5 - 0.18), 0.48, span.y * 0.5 - 0.2), 0.10, "b38a62", "wood")
+		batch.timber(Vector3(-0.44, 0.27, 0.25), Vector3(1.15, 0.25, 0.63), "ab7750", 0.15)
+	batch.finish(model)
+	return model
 
 func crate(pos: Vector3, size: float) -> void:
 	props.box(pos + Vector3.UP * size * 0.49, Vector3(size, size * 0.98, size * 0.92), "ad7c4a")
@@ -456,6 +509,8 @@ func add_person(index: int) -> void:
 	workers.append(resident)
 	destinations.append(Vector3.ZERO)
 	worker_jobs.append("")
+	walking_paths.append(PackedVector3Array())
+	path_steps.append(0)
 
 func attachment(parent: Node3D, pos: Vector3) -> Node3D:
 	var pivot := Node3D.new()
